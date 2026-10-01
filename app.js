@@ -1,0 +1,41 @@
+'use strict';
+const $=id=>document.getElementById(id),colors=['#bafa58','#6bcfff','#ffb771','#d4a0ff','#ff8aaf','#57dfb0'];let plan=null,selected=0,dirty=false;
+function element(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e;}
+function addRow(name='',hosts=10){if($('requirements').children.length>=16)return;const row=element('div','requirement');const n=element('input');n.value=name;n.placeholder='Tên mạng';n.maxLength=40;n.setAttribute('aria-label','Tên mạng con');const h=element('input');h.type='number';h.min=1;h.max=4294967294;h.step=1;h.value=hosts;h.setAttribute('aria-label','Số host yêu cầu');const remove=element('button','icon-button','×');remove.setAttribute('aria-label','Xóa mạng con');remove.onclick=()=>{row.remove();invalidate();updateCount();};row.append(n,h,remove);row.oninput=invalidate;$('requirements').append(row);updateCount();}
+function updateCount(){$('row-count').textContent=$('requirements').children.length+' subnet';$('add').disabled=$('requirements').children.length>=16;}
+function clearOutput(){plan=null;['results','world','legend','allocation-bar','steps'].forEach(id=>$(id).replaceChildren());['total','allocated','remaining','efficiency'].forEach(id=>$(id).textContent='—');$('base-caption').textContent='';}
+function invalidate(){dirty=true;clearOutput();$('input-status').textContent='Đầu vào đã thay đổi. Bấm Tính để cập nhật kết quả.';$('error').hidden=true;}
+function calc(){try{const requests=[...$('requirements').children].map(r=>({name:r.children[0].value,hosts:Number(r.children[1].value)}));plan=VLSM.calculate($('network').value,requests);dirty=false;selected=0;$('error').hidden=true;$('input-status').textContent=plan.normalized?'Đã chuẩn hóa địa chỉ thành '+VLSM.intToIp(plan.base)+'/'+plan.prefix+'.':'Đã kiểm tra: đủ IP, đúng biên và không chồng lấn.';render();}catch(e){clearOutput();$('error').textContent=e.message;$('error').hidden=false;$('input-status').textContent='Kiểm tra lại đầu vào để tiếp tục.';}}
+function render(){const ip=VLSM.intToIp;$('total').textContent=plan.size.toLocaleString('vi-VN')+' IP';$('allocated').textContent=plan.allocated.toLocaleString('vi-VN')+' IP';$('remaining').textContent=plan.remaining.toLocaleString('vi-VN')+' IP';$('efficiency').textContent=Math.round(plan.requested/plan.capacity*100)+'%';$('base-caption').textContent=ip(plan.base)+'/'+plan.prefix;['results','world','legend','allocation-bar'].forEach(id=>$(id).replaceChildren());const blocks=plan.rows.map((r,i)=>({...r,color:colors[i%colors.length],index:i}));if(plan.remaining)blocks.push({name:'Chưa phân bổ',size:plan.remaining,color:'#3c4c5e',index:-1});
+ blocks.forEach(r=>{const b=element('button','block'+(r.index===selected?' selected':''));b.style.setProperty('--color',r.color);b.style.width=r.size/plan.size*100+'%';b.title=r.name+' · '+r.size+' IP';b.setAttribute('aria-label',b.title);b.setAttribute('aria-pressed',r.index===selected);b.append(element('span','',r.size/plan.size>.07?(r.index===-1?'TRỐNG':'/'+r.prefix):''));b.onclick=()=>{if(performance.now()<suppressClickUntil)return;r.index===-1?showFree():select(r.index);};$('world').append(b);const l=element('span','legend-item');l.style.setProperty('--color',r.color);l.append(element('span','swatch'),element('span','',r.name+' · '+r.size+' IP'));$('legend').append(l);const bar=element('span');bar.style.setProperty('--color',r.color);bar.style.width=r.size/plan.size*100+'%';$('allocation-bar').append(bar);});
+ plan.rows.forEach((r,i)=>{const tr=element('tr',i===selected?'selected':'');tr.tabIndex=0;tr.setAttribute('aria-label','Xem giải thích mạng '+r.name);tr.onclick=()=>select(i);tr.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();select(i);}};const name=element('td');name.append(element('strong','',r.name),element('small','',r.hosts+' cần / '+r.capacity+' dùng được'));tr.append(name);[ip(r.network)+'/'+r.prefix,r.mask,ip(r.first)+' – '+ip(r.last),ip(r.broadcast)].forEach(t=>tr.append(element('td','',t)));$('results').append(tr);});explain();requestAnimationFrame(updateRotation);}
+function select(i){selected=i;render();}
+function step(title,body,formula){const d=element('div','step');d.append(element('h3','',title),element('p','',body),element('code','',formula));return d;}
+function explain(){const r=plan.rows[selected],ip=VLSM.intToIp;$('steps').replaceChildren();const grid=element('div','steps-grid');grid.append(step('1. Ưu tiên '+r.name,'Các yêu cầu được xếp giảm dần. Mạng này cần '+r.hosts+' host; tìm khối nhỏ nhất còn đủ chỗ.','2^'+r.bits+' − 2 = '+r.capacity+' ≥ '+r.hosts),step('2. Chọn prefix & mask',r.bits+' bit dành cho host, '+r.prefix+' bit dành cho mạng. Cấp '+r.size+' địa chỉ trên đúng biên khối.','/'+r.prefix+' · '+r.mask),step('3. Xác định dải sử dụng','Network: '+ip(r.network)+'. Broadcast: '+ip(r.broadcast)+'. Còn '+(r.capacity-r.hosts)+' vị trí host dự phòng.','Host: '+ip(r.first)+' → '+ip(r.last)));$('steps').append(grid);}
+function showFree(){$('steps').replaceChildren(element('p','','Chưa phân bổ: '+VLSM.intToIp(plan.base+plan.allocated)+' đến '+VLSM.intToIp(plan.base+plan.size-1)+'. Đây là phần địa chỉ còn lại, không nhất thiết tương ứng một subnet duy nhất.'));}
+function example(){$('network').value='203.162.4.0/24';$('requirements').replaceChildren();[['Kinh doanh',52],['Hành chính',25],['Kỹ thuật',22]].forEach(r=>addRow(...r));calc();}
+$('calculate').onclick=calc;$('example').onclick=example;$('add').onclick=()=>{addRow();invalidate();};$('network').oninput=invalidate;try{$('owner').value=localStorage.getItem('vlsm-owner')||'Bạn';}catch{}function owner(){try{localStorage.setItem('vlsm-owner',$('owner').value);}catch{}}$('owner').oninput=owner;owner();
+
+let angle=343,tilt=55,spinning=false,frame=0,lastTime=0,drag=null,suppressClickUntil=0;
+const scene=$('scene'),world=$('world');
+function updateRotation(){
+ const radians=angle*Math.PI/180,projection=Math.cos(tilt*Math.PI/180);
+ const w=world.offsetWidth,h=110;
+ const boundsW=Math.abs(w*Math.cos(radians))+Math.abs(h*Math.sin(radians))+100;
+ const boundsH=(Math.abs(w*Math.sin(radians))+Math.abs(h*Math.cos(radians)))*projection+100;
+ const scale=Math.min(1,(scene.clientWidth-28)/boundsW,(scene.clientHeight-30)/boundsH);
+ world.style.transform='scale('+Math.max(.1,scale)+') rotateX('+tilt+'deg) rotateZ('+angle+'deg)';
+ const display=angle===360?360:Math.round(((angle%360)+360)%360);$('rotation-angle').value=display;$('angle-value').textContent=display+'°';
+}
+function stopRotation(){spinning=false;cancelAnimationFrame(frame);lastTime=0;$('rotate').textContent='Tự xoay 360°';$('rotate').setAttribute('aria-pressed','false');}
+function tick(time){if(!spinning)return;if(lastTime)angle+=(Math.min(time-lastTime,100)/1000)*24;lastTime=time;updateRotation();frame=requestAnimationFrame(tick);}
+$('rotate').onclick=()=>{if(spinning){stopRotation();return;}spinning=true;$('rotate').textContent='Dừng xoay';$('rotate').setAttribute('aria-pressed','true');frame=requestAnimationFrame(tick);};
+$('rotation-angle').oninput=()=>{stopRotation();angle=Number($('rotation-angle').value);updateRotation();};
+$('reset-view').onclick=()=>{stopRotation();angle=343;tilt=55;updateRotation();};
+scene.addEventListener('pointerdown',e=>{if(e.button!==0)return;stopRotation();drag={id:e.pointerId,x:e.clientX,y:e.clientY,angle,tilt,moved:false};});
+scene.addEventListener('pointermove',e=>{if(!drag||e.pointerId!==drag.id)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(!drag.moved&&Math.hypot(dx,dy)>5){drag.moved=true;scene.setPointerCapture(e.pointerId);scene.classList.add('dragging');}if(drag.moved){angle=drag.angle+dx*.65;tilt=Math.max(20,Math.min(75,drag.tilt-dy*.35));updateRotation();}});
+function endDrag(e){if(!drag||e.pointerId!==drag.id)return;if(drag.moved)suppressClickUntil=performance.now()+300;if(scene.hasPointerCapture(e.pointerId))scene.releasePointerCapture(e.pointerId);drag=null;scene.classList.remove('dragging');}
+scene.addEventListener('pointerup',endDrag);scene.addEventListener('pointercancel',endDrag);
+window.addEventListener('resize',updateRotation);document.addEventListener('visibilitychange',()=>{if(document.hidden)stopRotation();});
+example();updateRotation();
+
